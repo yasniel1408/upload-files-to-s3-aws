@@ -1,71 +1,55 @@
 import express from 'express'
-import os from 'node:os'
-import fs from 'node:fs'
 import path from 'node:path'
+import { routerNode } from './src/routes/node.mjs'
+import { routerMulter } from './src/routes/multer.mjs'
+import multer from 'multer'
+import { s3Multer } from './src/routes/upload-to-s3.mjs'
 
 const PORT = 4000
 
 const app = express()
 
 app.use(express.json())
-
-app.post('/upload', (req, res) => {
-  res.json({ status: 'success' })
+const startTime = Date.now()
+app.use(function (_req, _res, next) {
+  console.log('Time: ', startTime)
+  next()
 })
 
-app.get('/process', (req, res) => {
-  console.log(process.cwd())
-
-  process.chdir('/tmp')
-
-  // process.exit(1);
-  process.on('exit', () => {
-    console.log('exit')
-  })
-
-  res.json({ status: 'success' })
+// servir un html
+app.get('/', (req, res) => {
+  res.sendFile(path.resolve('./index.html'))
 })
 
-app.get('/path', (req, res) => {
-  console.log(path.basename('/foo/bar/baz/asdf/quux.html'))
-  console.log(path.basename('/foo/bar/baz/asdf/quux.html', '.html'))
-  console.log(path.dirname('/foo/bar/baz/asdf/quux'))
-  console.log(path.extname('index.html'))
-  console.log(path.extname('index.coffee.md'))
+app.use('/', routerNode)
+app.use('/', routerMulter)
+app.use('/', s3Multer)
 
-  res.json({ status: 'success' })
+// calcular el tiempo de respuesta en miliseconds
+app.use(function (_req, res, next) {
+  const endTime = Date.now()
+  console.log('Time: ', endTime - startTime, 'ms')
+  next()
 })
-
-app.get('/os', (req, res) => {
-  console.log(process.env.USER_ID)
-  console.log(os.hostname())
-  console.log(os.platform())
-  console.log('No. CPUs', os.cpus().length)
-  console.log('ARQUITECTURA', os.arch())
-  console.log(os.release())
-  console.log('RAM: ', os.totalmem() / 1024 / 1024 / 1024)
-  console.log('RAM Libre: ', os.freemem() / 1024 / 1024)
-  console.log('Uptime: ', os.uptime() / 60 / 60)
-
-  res.json({ status: 'success!!!' })
-})
-
-app.get('/fs', (req, res) => {
-  console.log('INIT el archivo sync')
-  const data = fs.readFileSync('./file.txt', 'utf-8')
-  console.log(data)
-  console.log('END el archivo sync')
-
-  console.log('INIT el archivo async')
-  fs.readFile('./file.txt', 'utf-8', (_err, data) => {
-    console.log(data)
-    console.log('END el archivo async')
-  })
-
-  const stats = fs.statSync('./file.txt')
-  console.log('size', stats.size)
-
-  res.json({ status: 'success!!!' })
+// handle errors
+app.use(function (err, _req, res, next) {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      res.status(400).json({ status: 400, message: 'File too large' })
+    }
+    if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+      res
+        .status(400)
+        .json({ status: 400, message: 'Too many files to upload.' })
+    }
+    if (err.code === 'LIMIT_FILE_COUNT') {
+      res.status(400).json({ status: 400, message: 'File limit reached' })
+    }
+  } else {
+    console.error(err.stack)
+    res.json({ status: err.status, message: err.message })
+    next()
+  }
 })
 
 app.listen(PORT, () => {
